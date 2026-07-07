@@ -25,6 +25,7 @@ import {
 import AdminDashboard from './components/AdminDashboard';
 import ClientStation from './components/ClientStation';
 import InstallerWizard from './components/InstallerWizard';
+import AdminLogin from './components/AdminLogin';
 import { 
   Cpu, 
   Server, 
@@ -46,6 +47,12 @@ interface Toast {
 export default function App() {
   // Navigation / Router view mode
   const [viewMode, setViewMode] = useState<'installer' | 'admin' | 'client'>('installer');
+
+  // Active Admin/Cashier Session
+  const [currentAdminSession, setCurrentAdminSession] = useState<any | null>(() => {
+    const saved = localStorage.getItem('nex_admin_session');
+    return saved ? JSON.parse(saved) : null;
+  });
 
   // Master States with LocalStorage persistence fallback
   const [settings, setSettings] = useState<ShopSettings>(() => {
@@ -180,7 +187,27 @@ export default function App() {
       setOrders([]);
       setChatMessages([]);
       setViewMode('installer');
+      setCurrentAdminSession(null);
       showToast("System Purged", "Reset all relational databases and socket configs.", "warning");
+    }
+  };
+
+  const handleAdminLogout = async () => {
+    if (currentAdminSession) {
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: currentAdminSession.id })
+        });
+      } catch (err) {}
+
+      // Emit admin:logout socket event
+      handleTriggerSocketEvent('SERVER', 'admin:logout' as any, `Admin @${currentAdminSession.username} manually logged out of console.`);
+
+      setCurrentAdminSession(null);
+      localStorage.removeItem('nex_admin_session');
+      showToast("Operator Session Terminated", "Logged out of cashier terminal.", "info");
     }
   };
 
@@ -232,6 +259,19 @@ export default function App() {
 
         {/* Diagnostic Actions & Status Indicator */}
         <div className="flex items-center gap-4">
+          {currentAdminSession && viewMode === 'admin' && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#09090b] border border-zinc-800 rounded-xl">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+              <span className="text-[10px] font-mono text-zinc-400">OPERATOR: {currentAdminSession.username}</span>
+              <button 
+                onClick={handleAdminLogout}
+                className="text-[10px] text-red-400 hover:text-red-300 ml-1 font-mono uppercase underline hover:no-underline cursor-pointer"
+              >
+                Logout
+              </button>
+            </div>
+          )}
+
           <div className="hidden lg:flex items-center gap-2 font-mono text-[10px] text-zinc-500 border-r border-zinc-800 pr-4">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span>SOCKET SERVER Liveliness: OK</span>
@@ -255,29 +295,40 @@ export default function App() {
         )}
 
         {viewMode === 'admin' && (
-          <AdminDashboard 
-            computers={computers}
-            players={players}
-            products={products}
-            orders={orders}
-            transactions={transactions}
-            socketEvents={socketEvents}
-            settings={settings}
-            chatMessages={chatMessages}
-            onUpdateComputers={setComputers}
-            onUpdatePlayers={setPlayers}
-            onUpdateProducts={setProducts}
-            onUpdateOrders={setOrders}
-            onUpdateTransactions={setTransactions}
-            onUpdateSocketEvents={setSocketEvents}
-            onUpdateSettings={setSettings}
-            onSendAdminMessage={(pcId, text) => handleSendChatMessage(pcId, 'admin', text)}
-            onTriggerSocketEvent={handleTriggerSocketEvent}
-            onViewClientPC={(pcId) => {
-              setActiveClientPcId(pcId);
-              setViewMode('client');
-            }}
-          />
+          !currentAdminSession ? (
+            <AdminLogin 
+              onLoginSuccess={(adminUser, session) => {
+                setCurrentAdminSession(session);
+                localStorage.setItem('nex_admin_session', JSON.stringify(session));
+                showToast(`Session Initialized`, `Operator ${adminUser.username} authenticated successfully.`, "success");
+              }}
+              onTriggerSocketEvent={handleTriggerSocketEvent}
+            />
+          ) : (
+            <AdminDashboard 
+              computers={computers}
+              players={players}
+              products={products}
+              orders={orders}
+              transactions={transactions}
+              socketEvents={socketEvents}
+              settings={settings}
+              chatMessages={chatMessages}
+              onUpdateComputers={setComputers}
+              onUpdatePlayers={setPlayers}
+              onUpdateProducts={setProducts}
+              onUpdateOrders={setOrders}
+              onUpdateTransactions={setTransactions}
+              onUpdateSocketEvents={setSocketEvents}
+              onUpdateSettings={setSettings}
+              onSendAdminMessage={(pcId, text) => handleSendChatMessage(pcId, 'admin', text)}
+              onTriggerSocketEvent={handleTriggerSocketEvent}
+              onViewClientPC={(pcId) => {
+                setActiveClientPcId(pcId);
+                setViewMode('client');
+              }}
+            />
+          )
         )}
 
         {viewMode === 'client' && (

@@ -8,7 +8,9 @@ import {
   SettingsRepository,
   SocketEventRepository,
   TimerRepository,
-  Timer
+  Timer,
+  AdminRepository,
+  SessionRepository
 } from '../repositories/repositories';
 import { Computer, Player, POSProduct, Order, TransactionLog, ChatMessage, SocketEvent } from '../types/types';
 import { logger } from '../utils/logger';
@@ -591,5 +593,63 @@ export class ChatService {
     });
 
     return message;
+  }
+}
+
+// ==========================================
+// 9. Auth Service
+// ==========================================
+export class AuthService {
+  constructor(
+    private adminRepo = new AdminRepository(),
+    private playerRepo = new PlayerRepository(),
+    private sessionRepo = new SessionRepository()
+  ) {}
+
+  public async adminLogin(username: string, passwordPlain: string): Promise<any> {
+    const admin = await this.adminRepo.Login(username, passwordPlain);
+    if (!admin) return undefined;
+
+    const session = await this.sessionRepo.CreateSession(admin.id, admin.username, admin.role);
+    return { session, user: admin };
+  }
+
+  public async playerLogin(username: string, passwordPlain: string, pcId: string | null = null): Promise<any> {
+    const player = await this.playerRepo.FindByUsername(username);
+    if (!player) return undefined;
+
+    const isValid = await this.playerRepo.ValidatePassword(username, passwordPlain);
+    if (!isValid) return undefined;
+
+    const session = await this.sessionRepo.CreateSession(player.id, player.username, 'player', pcId);
+    return { session, user: player };
+  }
+
+  public async guestLogin(pcId: string | null = null): Promise<any> {
+    const guestId = `GUEST-${Date.now()}`;
+    const username = `Guest-${Math.floor(Math.random() * 9000 + 1000)}`;
+    const session = await this.sessionRepo.CreateSession(guestId, username, 'Guest', pcId);
+    return { 
+      session, 
+      user: { 
+        id: guestId, 
+        username, 
+        fullName: 'Guest Player', 
+        balance: 0, 
+        points: 0, 
+        status: 'Active', 
+        membershipType: 'Regular', 
+        timePlayedTotal: 0, 
+        createdDate: new Date().toISOString() 
+      } 
+    };
+  }
+
+  public async validateSession(sessionId: string): Promise<any> {
+    return this.sessionRepo.ValidateSession(sessionId);
+  }
+
+  public async logout(sessionId: string): Promise<boolean> {
+    return this.sessionRepo.DeleteSession(sessionId);
   }
 }

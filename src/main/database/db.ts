@@ -56,6 +56,7 @@ class DatabaseManager {
       d.prepare('DELETE FROM settings').run();
       d.prepare('DELETE FROM admins').run();
       d.prepare('DELETE FROM sessions').run();
+      d.prepare('DELETE FROM auth_sessions').run();
       d.prepare('DELETE FROM products').run();
       d.prepare('DELETE FROM orders').run();
       d.prepare('DELETE FROM chat_messages').run();
@@ -215,6 +216,19 @@ class DatabaseManager {
         duration INTEGER NOT NULL,
         cost REAL NOT NULL,
         status TEXT NOT NULL
+      )
+    `).run();
+
+    // 8.1. Auth Sessions Table
+    d.prepare(`
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        username TEXT NOT NULL,
+        role TEXT NOT NULL,
+        pcId TEXT,
+        createdAt TEXT NOT NULL,
+        expiresAt TEXT NOT NULL
       )
     `).run();
 
@@ -414,8 +428,10 @@ class DatabaseManager {
 
     // Check admins
     const adminsCount = d.prepare('SELECT COUNT(*) as count FROM admins').get() as { count: number };
+    logger.info(`[DatabaseManager] Current admin records count in SQLite database: ${adminsCount.count}`);
+
     if (adminsCount.count === 0) {
-      logger.info('Seeding default admin profiles into SQLite admins table...');
+      logger.info('[DatabaseManager] Admin seed execution: No administrator accounts found. Seeding default profiles...');
       const insertAdmin = d.prepare(`
         INSERT INTO admins (id, username, passwordHash, role, createdAt)
         VALUES (?, ?, ?, ?, ?)
@@ -425,6 +441,37 @@ class DatabaseManager {
       const cashierHash = bcrypt.hashSync('cashier123', salt);
       insertAdmin.run('A1', 'admin', adminHash, 'SuperAdmin', new Date().toISOString());
       insertAdmin.run('A2', 'cashier1', cashierHash, 'Cashier', new Date().toISOString());
+      logger.info('[DatabaseManager] Admin seed execution completed successfully.');
+    } else {
+      // If table is not empty, ensure 'admin' exists
+      const existingAdmin = d.prepare('SELECT * FROM admins WHERE username = ?').get('admin') as any;
+      if (!existingAdmin) {
+        logger.info('[DatabaseManager] Table is not empty but default admin user @admin is missing. Auto-creating default admin @admin...');
+        const salt = bcrypt.genSaltSync(10);
+        const adminHash = bcrypt.hashSync('admin123', salt);
+        d.prepare(`
+          INSERT INTO admins (id, username, passwordHash, role, createdAt)
+          VALUES (?, ?, ?, ?, ?)
+        `).run('A1', 'admin', adminHash, 'SuperAdmin', new Date().toISOString());
+      }
+    }
+
+    // Auto-migrate/verify: check if any admin passwordHash is stored as plain-text and hash it with bcrypt!
+    try {
+      const allAdmins = d.prepare('SELECT * FROM admins').all() as any[];
+      for (const admin of allAdmins) {
+        const hash = admin.passwordHash;
+        const isBcrypt = hash && (hash.startsWith('$2a$') || hash.startsWith('$2b$'));
+        if (!isBcrypt) {
+          logger.info(`[DatabaseManager] Outdated or plain-text password hash detected for administrator @${admin.username}. Migrating passwordHash automatically using bcrypt...`);
+          const salt = bcrypt.genSaltSync(10);
+          const hashed = bcrypt.hashSync(hash || 'admin123', salt);
+          d.prepare('UPDATE admins SET passwordHash = ? WHERE id = ?').run(hashed, admin.id);
+          logger.info(`[DatabaseManager] Password hash migration complete for administrator @${admin.username}.`);
+        }
+      }
+    } catch (err: any) {
+      logger.error(`[DatabaseManager] Outdated password hash auto-migration failed: ${err.message}`);
     }
   }
 }

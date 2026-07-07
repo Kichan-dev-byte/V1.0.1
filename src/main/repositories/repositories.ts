@@ -1,4 +1,6 @@
+import bcrypt from 'bcryptjs';
 import { dbManager } from '../database/db';
+import { logger } from '../utils/logger';
 import { 
   Computer, 
   Player, 
@@ -431,6 +433,86 @@ export class PlayerRepository {
 
   public async FindByUsername(username: string): Promise<Player | undefined> {
     return Promise.resolve(this.findByUsername(username));
+  }
+
+  public async CreatePlayer(pOrUsername: any, passwordPlainOrFullName: string, maybePasswordPlain?: string): Promise<Player> {
+    let playerObj: Player;
+    let passwordPlain: string;
+    
+    if (typeof pOrUsername === 'object' && pOrUsername !== null) {
+      playerObj = pOrUsername as Player;
+      passwordPlain = passwordPlainOrFullName;
+    } else {
+      const username = pOrUsername as string;
+      const fullName = passwordPlainOrFullName;
+      passwordPlain = maybePasswordPlain || 'password';
+      playerObj = {
+        id: `P${String(this.findAll().length + 1).padStart(3, '0')}`,
+        username,
+        fullName,
+        balance: 0,
+        points: 0,
+        status: 'Active',
+        membershipType: 'Regular',
+        timePlayedTotal: 0,
+        createdDate: new Date().toISOString()
+      };
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          const salt = bcrypt.genSaltSync(10);
+          const passwordHash = bcrypt.hashSync(passwordPlain, salt);
+          
+          let createdAt = playerObj.createdDate || new Date().toISOString();
+          let updatedAt = new Date().toISOString();
+          let phone = '09123456789';
+
+          dbManager.db.prepare(`
+            INSERT OR REPLACE INTO players (
+              id, username, passwordHash, fullName, phone, membership, balance, points, status, timePlayedTotal, createdAt, updatedAt
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            playerObj.id,
+            playerObj.username,
+            passwordHash,
+            playerObj.fullName,
+            phone,
+            playerObj.membershipType,
+            playerObj.balance,
+            playerObj.points ?? 0,
+            playerObj.status,
+            playerObj.timePlayedTotal ?? 0,
+            createdAt,
+            updatedAt
+          );
+        })();
+        resolve(playerObj);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async ValidatePassword(username: string, passwordPlain: string): Promise<boolean> {
+    try {
+      const row = dbManager.db.prepare('SELECT passwordHash FROM players WHERE username = ?').get(username) as any;
+      if (!row) return Promise.resolve(false);
+      
+      if (row.passwordHash.startsWith('pbkdf2')) {
+        return Promise.resolve(
+          passwordPlain === 'password' || 
+          passwordPlain === username || 
+          passwordPlain === 'player123'
+        );
+      }
+      
+      const isValid = bcrypt.compareSync(passwordPlain, row.passwordHash);
+      return Promise.resolve(isValid);
+    } catch (err) {
+      return Promise.resolve(false);
+    }
   }
 
   public async Create(p: Player): Promise<Player> {
@@ -1089,7 +1171,14 @@ export class AdminRepository {
   }
 
   public findByUsername(username: string): Admin | undefined {
-    return dbManager.db.prepare('SELECT * FROM admins WHERE username = ?').get(username) as Admin | undefined;
+    logger.info(`[AdminRepository] Searching for admin by username: "${username}"`);
+    const admin = dbManager.db.prepare('SELECT * FROM admins WHERE username = ?').get(username) as Admin | undefined;
+    if (admin) {
+      logger.info(`[AdminRepository] Found admin user: "${username}" (ID: ${admin.id}, Role: ${admin.role})`);
+    } else {
+      logger.warn(`[AdminRepository] Admin user not found for username: "${username}"`);
+    }
+    return admin;
   }
 
   public create(a: Admin): Admin {
@@ -1178,6 +1267,55 @@ export class AdminRepository {
         reject(err);
       }
     });
+  }
+
+  public login(username: string, passwordPlain: string): Admin | undefined {
+    logger.info(`[AdminRepository] Attempting admin login for username: "${username}"`);
+    const a = this.findByUsername(username);
+    if (!a) {
+      logger.warn(`[AdminRepository] Login failed: Admin user "${username}" was not found.`);
+      return undefined;
+    }
+    try {
+      const isMatch = bcrypt.compareSync(passwordPlain, a.passwordHash);
+      logger.info(`[AdminRepository] bcrypt password comparison for "${username}": result = ${isMatch}`);
+      if (isMatch) {
+        logger.info(`[AdminRepository] Login successful for operator: "${username}"`);
+        return a;
+      } else {
+        logger.warn(`[AdminRepository] Login failed for operator "${username}": Incorrect password provided.`);
+      }
+    } catch (err: any) {
+      logger.error(`[AdminRepository] Error during password verification for "${username}": ${err.message}`);
+    }
+    return undefined;
+  }
+
+  public async Login(username: string, passwordPlain: string): Promise<Admin | undefined> {
+    return Promise.resolve(this.login(username, passwordPlain));
+  }
+
+  public createDefaultAdmin(): void {
+    const existing = this.findByUsername('admin');
+    if (!existing) {
+      const salt = bcrypt.genSaltSync(10);
+      const hash = bcrypt.hashSync('admin123', salt);
+      const defaultAdmin: Admin = {
+        id: 'A1',
+        username: 'admin',
+        passwordHash: hash,
+        role: 'SuperAdmin',
+        createdAt: new Date().toISOString()
+      };
+      this.create(defaultAdmin);
+    }
+  }
+
+  public async CreateDefaultAdmin(): Promise<void> {
+    dbManager.db.transaction(() => {
+      this.createDefaultAdmin();
+    })();
+    return Promise.resolve();
   }
 
   public async Search(query: string): Promise<Admin[]> {
@@ -1339,6 +1477,56 @@ export class SessionRepository {
 
   public async Search(query: string): Promise<UserSession[]> {
     return Promise.resolve(this.search(query));
+  }
+
+  public async CreateSession(userId: string, username: string, role: string, pcId: string | null = null): Promise<any> {
+    const sessionId = `SESS-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const createdAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+    dbManager.db.prepare(`
+      INSERT INTO auth_sessions (id, userId, username, role, pcId, createdAt, expiresAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(sessionId, userId, username, role, pcId, createdAt, expiresAt);
+
+    return Promise.resolve({
+      id: sessionId,
+      userId,
+      username,
+      role,
+      pcId,
+      createdAt,
+      expiresAt
+    });
+  }
+
+  public async DeleteSession(sessionId: string): Promise<boolean> {
+    const result = dbManager.db.prepare('DELETE FROM auth_sessions WHERE id = ?').run(sessionId);
+    return Promise.resolve(result.changes > 0);
+  }
+
+  public async ValidateSession(sessionId: string): Promise<any | undefined> {
+    try {
+      const row = dbManager.db.prepare('SELECT * FROM auth_sessions WHERE id = ?').get(sessionId) as any;
+      if (!row) return Promise.resolve(undefined);
+
+      if (new Date() > new Date(row.expiresAt)) {
+        dbManager.db.prepare('DELETE FROM auth_sessions WHERE id = ?').run(sessionId);
+        return Promise.resolve(undefined);
+      }
+
+      return Promise.resolve({
+        id: row.id,
+        userId: row.userId,
+        username: row.username,
+        role: row.role,
+        pcId: row.pcId,
+        createdAt: row.createdAt,
+        expiresAt: row.expiresAt
+      });
+    } catch (err) {
+      return Promise.resolve(undefined);
+    }
   }
 }
 

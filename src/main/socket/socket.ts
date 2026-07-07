@@ -2,10 +2,12 @@ import { Server as HttpServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { logger } from '../utils/logger';
 import { ComputerService, ChatService, BillingService } from '../services/services';
+import { SocketEventRepository } from '../repositories/repositories';
 
 const pcService = new ComputerService();
 const chatService = new ChatService();
 const billingService = new BillingService();
+const socketEventRepo = new SocketEventRepository();
 
 interface ConnectedClient {
   pcId: string;
@@ -72,6 +74,55 @@ export class SocketServer {
                   ws.send(JSON.stringify({ type: 'order_failed', error: 'Order placement rejected' }));
                 }
               }
+              break;
+
+            case 'player:login':
+              logger.info(`Player @${data?.username} logged in at PC ${pcId}`);
+              socketEventRepo.create({
+                id: `EV-${Date.now()}`,
+                pcId,
+                type: 'unlock',
+                message: `Player @${data?.username} logged in.`,
+                timestamp: new Date().toISOString()
+              });
+              this.broadcast({ type: 'player_logged_in', pcId, username: data?.username });
+              break;
+
+            case 'player:logout':
+              logger.info(`Player logged out at PC ${pcId}`);
+              pcService.lockComputer(pcId);
+              socketEventRepo.create({
+                id: `EV-${Date.now()}`,
+                pcId,
+                type: 'lock',
+                message: `Player logged out. Station locked.`,
+                timestamp: new Date().toISOString()
+              });
+              this.broadcast({ type: 'player_logged_out', pcId });
+              break;
+
+            case 'admin:login':
+              logger.info(`Admin @${data?.username} logged in`);
+              socketEventRepo.create({
+                id: `EV-${Date.now()}`,
+                pcId: 'SERVER',
+                type: 'alert',
+                message: `Admin @${data?.username} logged in.`,
+                timestamp: new Date().toISOString()
+              });
+              this.broadcast({ type: 'admin_logged_in', username: data?.username });
+              break;
+
+            case 'admin:logout':
+              logger.info(`Admin @${data?.username} logged out`);
+              socketEventRepo.create({
+                id: `EV-${Date.now()}`,
+                pcId: 'SERVER',
+                type: 'alert',
+                message: `Admin @${data?.username} logged out.`,
+                timestamp: new Date().toISOString()
+              });
+              this.broadcast({ type: 'admin_logged_out', username: data?.username });
               break;
 
             default:

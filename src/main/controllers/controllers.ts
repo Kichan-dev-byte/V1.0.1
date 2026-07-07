@@ -7,7 +7,8 @@ import {
   SalesService, 
   SettingsService,
   ChatService,
-  BillingService
+  BillingService,
+  AuthService
 } from '../services/services';
 import { 
   ComputerRepository, 
@@ -463,5 +464,96 @@ export class SettingsController {
 
   public getSocketEvents(req: Request, res: Response): void {
     res.json(this.settingsService.getSocketEvents());
+  }
+}
+
+// ==========================================
+// 5. Auth Controller
+// ==========================================
+export class AuthController {
+  constructor(
+    private authService = new AuthService()
+  ) {}
+
+  public async adminLogin(req: Request, res: Response): Promise<void> {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      res.status(400).json({ error: "Username and password are required" });
+      return;
+    }
+
+    try {
+      const result = await this.authService.adminLogin(username, password);
+      if (!result) {
+        res.status(401).json({ error: "Invalid admin credentials" });
+        return;
+      }
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+
+  public async playerLogin(req: Request, res: Response): Promise<void> {
+    const { username, password, pcId } = req.body;
+    if (!username || !password) {
+      res.status(400).json({ error: "Username and password are required" });
+      return;
+    }
+
+    try {
+      const result = await this.authService.playerLogin(username, password, pcId || null);
+      if (!result) {
+        res.status(401).json({ error: "Invalid member credentials" });
+        return;
+      }
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+
+  public async guestLogin(req: Request, res: Response): Promise<void> {
+    const { pcId } = req.body;
+    try {
+      const result = await this.authService.guestLogin(pcId || null);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+
+  public async validateSession(req: Request, res: Response): Promise<void> {
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      res.status(400).json({ error: "Session ID is required" });
+      return;
+    }
+
+    try {
+      const session = await this.authService.validateSession(sessionId);
+      if (!session) {
+        res.status(401).json({ error: "Session is invalid or has expired" });
+        return;
+      }
+      res.json({ success: true, session });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+
+  public async logout(req: Request, res: Response): Promise<void> {
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      res.status(400).json({ error: "Session ID is required" });
+      return;
+    }
+
+    try {
+      const success = await this.authService.logout(sessionId);
+      res.json({ success });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   }
 }

@@ -6,7 +6,8 @@ import {
   ChatController, 
   SettingsController,
   TimerController,
-  AdminController
+  AdminController,
+  AuthController
 } from '../controllers/controllers';
 
 const router = Router();
@@ -18,6 +19,7 @@ const chatCtrl = new ChatController();
 const settingsCtrl = new SettingsController();
 const timerCtrl = new TimerController();
 const adminCtrl = new AdminController();
+const authCtrl = new AuthController();
 
 // ==========================================
 // 1. Computer Routes
@@ -80,5 +82,14 @@ router.get('/settings', settingsCtrl.get.bind(settingsCtrl));
 router.post('/settings', settingsCtrl.update.bind(settingsCtrl));
 router.post('/settings/reset', settingsCtrl.reset.bind(settingsCtrl));
 router.get('/settings/events', settingsCtrl.getSocketEvents.bind(settingsCtrl));
+
+// ==========================================
+// 5. Authentication Routes
+// ==========================================
+router.post('/auth/admin/login', authCtrl.adminLogin.bind(authCtrl));
+router.post('/auth/player/login', authCtrl.playerLogin.bind(authCtrl));
+router.post('/auth/guest/login', authCtrl.guestLogin.bind(authCtrl));
+router.post('/auth/session/validate', authCtrl.validateSession.bind(authCtrl));
+router.post('/auth/logout', authCtrl.logout.bind(authCtrl));
 
 export default router;
