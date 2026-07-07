@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { io } from 'socket.io-client';
 import { 
   INITIAL_COMPUTERS, 
   INITIAL_PLAYERS, 
@@ -95,6 +96,49 @@ export default function App() {
   // Notifications Toast queue
   const [toasts, setToasts] = useState<Toast[]>([]);
 
+  // Ref to store socket.io-client connection
+  const socketRef = useRef<any>(null);
+
+  // 1. Fetch initial computers from backend on mount
+  useEffect(() => {
+    fetch('/api/computers')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setComputers(data);
+        }
+      })
+      .catch(err => console.error("Error loading computers from backend:", err));
+  }, []);
+
+  // 2. Establish Socket.IO Client Connection & handle events
+  useEffect(() => {
+    const socketUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:4000'
+      : `${window.location.protocol}//${window.location.hostname}:4000`;
+    
+    const socket = io(socketUrl);
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log('Connected');
+    });
+
+    socket.on('server:welcome', () => {
+      console.log('Welcome received');
+      socket.emit('client:register', {
+        computerNumber: "PC-01",
+        computerName: "Front Left",
+        hostname: "DESKTOP-ABC123",
+        version: "1.0.0"
+      });
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
   // Sync to LocalStorage on modifications
   useEffect(() => {
     localStorage.setItem('nex_settings', JSON.stringify(settings));
@@ -140,6 +184,19 @@ export default function App() {
     };
 
     setSocketEvents(prev => [newEvent, ...prev]);
+
+    // Emit over socket if connected
+    if (socketRef.current && socketRef.current.connected) {
+      if (type === 'chat') {
+        socketRef.current.emit('chat', { pcId, data: { text: message, sender: 'client' } });
+      } else if (type === 'order') {
+        socketRef.current.emit('order', { pcId, data: { items: [] } });
+      } else if (type === 'unlock') {
+        socketRef.current.emit('player:login', { pcId, data: { username: 'Guest' } });
+      } else if (type === 'lock') {
+        socketRef.current.emit('player:logout', { pcId });
+      }
+    }
 
     // Format visual notification banners
     if (type === 'unlock') {
