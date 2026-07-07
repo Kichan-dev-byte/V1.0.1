@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Google AI Studio App</title>
+    <script>
+      (function() {
+        try {
+          if (typeof window !== 'undefined') {
+            if (!window.chrome) {
+              window.chrome = {};
+            }
+            if (!window.chrome.runtime) {
+              window.chrome.runtime = {};
+            }
+            if (typeof window.chrome.runtime.getManifest !== 'function') {
+              window.chrome.runtime.getManifest = function() {
+                return {
+                  name: "NEX Cafe Console",
+                  version: "1.0.0",
+                  manifest_version: 3
+                };
+              };
+            }
+            if (!window.browser) {
+              window.browser = {};
+            }
+            if (!window.browser.runtime) {
+              window.browser.runtime = {};
+            }
+            if (typeof window.browser.runtime.getManifest !== 'function') {
+              window.browser.runtime.getManifest = function() {
+                return {
+                  name: "NEX Cafe Console",
+                  version: "1.0.0",
+                  manifest_version: 3
+                };
+              };
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to polyfill chrome/browser runtime:", e);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/renderer/main.tsx"></script>
+  </body>
+</html>
+

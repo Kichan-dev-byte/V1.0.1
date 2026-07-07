@@ -1,0 +1,6 @@
+{
+  "name": "NEX Computer Shop Management System",
+  "description": "A comprehensive web-based simulation and management suite for internet cafes, featuring real-time client tracking, timer engines, POS billing, player accounts, and reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
