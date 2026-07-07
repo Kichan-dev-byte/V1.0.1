@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
 import { config } from '../config/config';
 import { logger } from '../utils/logger';
 import {
@@ -70,7 +71,7 @@ class DatabaseManager {
 
     // 1. Players Table
     try {
-      d.prepare('SELECT passwordHash FROM players LIMIT 1').get();
+      d.prepare('SELECT points FROM players LIMIT 1').get();
     } catch (e) {
       logger.info('Dropping obsolete players table due to schema change...');
       d.prepare('DROP TABLE IF EXISTS players').run();
@@ -85,7 +86,9 @@ class DatabaseManager {
         phone TEXT NOT NULL,
         membership TEXT NOT NULL,
         balance REAL NOT NULL,
+        points INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL,
+        timePlayedTotal INTEGER NOT NULL DEFAULT 0,
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL
       )
@@ -158,6 +161,13 @@ class DatabaseManager {
     `).run();
 
     // 6. Settings Table (Shop config limits, single-record singleton structure)
+    try {
+      d.prepare('SELECT darkTheme FROM settings LIMIT 1').get();
+    } catch (e) {
+      logger.info('Dropping obsolete settings table to add darkTheme and currency columns...');
+      d.prepare('DROP TABLE IF EXISTS settings').run();
+    }
+
     d.prepare(`
       CREATE TABLE IF NOT EXISTS settings (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -166,9 +176,11 @@ class DatabaseManager {
         rateConsole REAL NOT NULL,
         shopName TEXT NOT NULL,
         currencySymbol TEXT NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'USD',
         taxRate REAL NOT NULL,
         enableAutoLock INTEGER NOT NULL, -- 0 (false) or 1 (true)
-        warnMinutesRemaining INTEGER NOT NULL
+        warnMinutesRemaining INTEGER NOT NULL,
+        darkTheme INTEGER NOT NULL DEFAULT 1 -- 0 (false) or 1 (true)
       )
     `).run();
 
@@ -260,17 +272,19 @@ class DatabaseManager {
     if (settingsCount.count === 0) {
       logger.info('Seeding default settings into SQLite settings table...');
       d.prepare(`
-        INSERT INTO settings (id, rateStandard, rateVIP, rateConsole, shopName, currencySymbol, taxRate, enableAutoLock, warnMinutesRemaining)
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO settings (id, rateStandard, rateVIP, rateConsole, shopName, currencySymbol, currency, taxRate, enableAutoLock, warnMinutesRemaining, darkTheme)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         INITIAL_SETTINGS.rateStandard,
         INITIAL_SETTINGS.rateVIP,
         INITIAL_SETTINGS.rateConsole,
-        INITIAL_SETTINGS.shopName,
-        INITIAL_SETTINGS.currencySymbol,
+        "NEX Gaming Lounge",
+        "$",
+        "USD",
         INITIAL_SETTINGS.taxRate,
         INITIAL_SETTINGS.enableAutoLock ? 1 : 0,
-        INITIAL_SETTINGS.warnMinutesRemaining
+        INITIAL_SETTINGS.warnMinutesRemaining,
+        1
       );
     }
 
@@ -305,8 +319,8 @@ class DatabaseManager {
     if (playersCount.count === 0) {
       logger.info('Seeding default players into SQLite players table...');
       const insertPlayer = d.prepare(`
-        INSERT INTO players (id, username, passwordHash, fullName, phone, membership, balance, status, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO players (id, username, passwordHash, fullName, phone, membership, balance, points, status, timePlayedTotal, createdAt, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const p of INITIAL_PLAYERS) {
         insertPlayer.run(
@@ -317,7 +331,9 @@ class DatabaseManager {
           '09123456789', // default phone number
           p.membershipType,
           p.balance,
+          p.points,
           p.status,
+          p.timePlayedTotal,
           p.createdDate,
           p.createdDate
         );
@@ -404,8 +420,11 @@ class DatabaseManager {
         INSERT INTO admins (id, username, passwordHash, role, createdAt)
         VALUES (?, ?, ?, ?, ?)
       `);
-      insertAdmin.run('A1', 'admin', 'admin123', 'SuperAdmin', new Date().toISOString());
-      insertAdmin.run('A2', 'cashier1', 'cashier123', 'Cashier', new Date().toISOString());
+      const salt = bcrypt.genSaltSync(10);
+      const adminHash = bcrypt.hashSync('admin123', salt);
+      const cashierHash = bcrypt.hashSync('cashier123', salt);
+      insertAdmin.run('A1', 'admin', adminHash, 'SuperAdmin', new Date().toISOString());
+      insertAdmin.run('A2', 'cashier1', cashierHash, 'Cashier', new Date().toISOString());
     }
   }
 }

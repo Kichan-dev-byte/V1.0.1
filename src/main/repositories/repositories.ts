@@ -51,6 +51,12 @@ export interface UserSession {
   status: string;
 }
 
+// Backend Extended Settings Interface
+export interface BackendShopSettings extends ShopSettings {
+  currency?: string;
+  darkTheme?: boolean;
+}
+
 // ==========================================
 // 1. Computer Repository
 // ==========================================
@@ -141,6 +147,12 @@ export class ComputerRepository {
     return this.mapRowToComputer(row);
   }
 
+  public findByComputerNumber(computerNumber: number): Computer | undefined {
+    const row = dbManager.db.prepare('SELECT * FROM computers WHERE computerNumber = ?').get(computerNumber) as any;
+    if (!row) return undefined;
+    return this.mapRowToComputer(row);
+  }
+
   public create(pc: Computer): Computer {
     this.save(pc);
     return pc;
@@ -166,6 +178,22 @@ export class ComputerRepository {
       WHERE id LIKE ? OR computerName LIKE ? OR ipAddress LIKE ? OR macAddress LIKE ? OR currentPlayer LIKE ? OR status LIKE ?
     `).all(`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`) as any[];
     return rows.map(row => this.mapRowToComputer(row));
+  }
+
+  public updateStatus(idOrNumber: string | number, status: string): Computer | undefined {
+    const pc = typeof idOrNumber === 'number' ? this.findByComputerNumber(idOrNumber) : this.findById(String(idOrNumber));
+    if (!pc) return undefined;
+    pc.status = status as any;
+    this.save(pc);
+    return pc;
+  }
+
+  public updateHeartbeat(idOrNumber: string | number): Computer | undefined {
+    const pc = typeof idOrNumber === 'number' ? this.findByComputerNumber(idOrNumber) : this.findById(String(idOrNumber));
+    if (!pc) return undefined;
+    pc.lastHeartbeat = new Date().toISOString();
+    this.save(pc);
+    return pc;
   }
 
   public save(pc: Computer): void {
@@ -196,6 +224,92 @@ export class ComputerRepository {
       createdAt
     );
   }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<Computer[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<Computer | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async FindByComputerNumber(computerNumber: number): Promise<Computer | undefined> {
+    return Promise.resolve(this.findByComputerNumber(computerNumber));
+  }
+
+  public async Create(pc: Computer): Promise<Computer> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.save(pc);
+        })();
+        resolve(pc);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<Computer>): Promise<Computer | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Computer | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<Computer[]> {
+    return Promise.resolve(this.search(query));
+  }
+
+  public async UpdateStatus(idOrNumber: string | number, status: string): Promise<Computer | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Computer | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.updateStatus(idOrNumber, status);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async UpdateHeartbeat(idOrNumber: string | number): Promise<Computer | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Computer | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.updateHeartbeat(idOrNumber);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
 }
 
 // ==========================================
@@ -203,27 +317,15 @@ export class ComputerRepository {
 // ==========================================
 export class PlayerRepository {
   private mapRowToPlayer(row: any): Player {
-    let points = 0;
-    if (row.username === 'john_doe') points = 150;
-    else if (row.username === 'jane_smith') points = 420;
-    else if (row.username === 'alex_gamer') points = 80;
-    else if (row.username === 'cyber_sam') points = 640;
-
-    let timePlayedTotal = 120;
-    if (row.username === 'john_doe') timePlayedTotal = 720;
-    else if (row.username === 'jane_smith') timePlayedTotal = 1440;
-    else if (row.username === 'alex_gamer') timePlayedTotal = 300;
-    else if (row.username === 'cyber_sam') timePlayedTotal = 2880;
-
     return {
       id: row.id,
       username: row.username,
       fullName: row.fullName,
       balance: row.balance,
-      points,
+      points: row.points ?? 0,
       status: row.status as 'Active' | 'Suspended',
       membershipType: row.membership as 'Regular' | 'VIP',
-      timePlayedTotal,
+      timePlayedTotal: row.timePlayedTotal ?? 0,
       createdDate: row.createdAt
     };
   }
@@ -272,6 +374,17 @@ export class PlayerRepository {
     return rows.map(row => this.mapRowToPlayer(row));
   }
 
+  public updateBalance(idOrUsername: string, newBalance: number): Player | undefined {
+    let p = this.findByUsername(idOrUsername);
+    if (!p) {
+      p = this.findById(idOrUsername);
+    }
+    if (!p) return undefined;
+    p.balance = parseFloat(Number(newBalance).toFixed(2));
+    this.save(p);
+    return p;
+  }
+
   public save(p: Player): void {
     let passwordHash = 'pbkdf2:sha256:260000$player_hash_placeholder';
     let phone = '09123456789';
@@ -289,8 +402,8 @@ export class PlayerRepository {
 
     dbManager.db.prepare(`
       INSERT OR REPLACE INTO players (
-        id, username, passwordHash, fullName, phone, membership, balance, status, createdAt, updatedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, username, passwordHash, fullName, phone, membership, balance, points, status, timePlayedTotal, createdAt, updatedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       p.id,
       p.username,
@@ -299,10 +412,84 @@ export class PlayerRepository {
       phone,
       p.membershipType,
       p.balance,
+      p.points ?? 0,
       p.status,
+      p.timePlayedTotal ?? 0,
       createdAt,
       updatedAt
     );
+  }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<Player[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<Player | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async FindByUsername(username: string): Promise<Player | undefined> {
+    return Promise.resolve(this.findByUsername(username));
+  }
+
+  public async Create(p: Player): Promise<Player> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.save(p);
+        })();
+        resolve(p);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<Player>): Promise<Player | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Player | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<Player[]> {
+    return Promise.resolve(this.search(query));
+  }
+
+  public async UpdateBalance(idOrUsername: string, newBalance: number): Promise<Player | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Player | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.updateBalance(idOrUsername, newBalance);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 }
 
@@ -351,6 +538,190 @@ export class TimerRepository {
       INSERT OR REPLACE INTO timers (id, computerId, playerId, startTime, remainingSeconds, paused, rateId)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(t.id, t.computerId, t.playerId, t.startTime, t.remainingSeconds, t.paused, t.rateId);
+  }
+
+  public startTimer(id: string): Timer | undefined {
+    const t = this.findById(id);
+    if (!t) return undefined;
+    t.paused = 0;
+    t.startTime = new Date().toISOString();
+    this.save(t);
+    return t;
+  }
+
+  public pauseTimer(id: string): Timer | undefined {
+    const t = this.findById(id);
+    if (!t) return undefined;
+    t.paused = 1;
+    this.save(t);
+    return t;
+  }
+
+  public resumeTimer(id: string): Timer | undefined {
+    const t = this.findById(id);
+    if (!t) return undefined;
+    t.paused = 0;
+    t.startTime = new Date().toISOString();
+    this.save(t);
+    return t;
+  }
+
+  public stopTimer(id: string): boolean {
+    return this.delete(id);
+  }
+
+  public addTime(id: string, seconds: number): Timer | undefined {
+    const t = this.findById(id);
+    if (!t) return undefined;
+    t.remainingSeconds = Math.max(0, t.remainingSeconds + seconds);
+    this.save(t);
+    return t;
+  }
+
+  public subtractTime(id: string, seconds: number): Timer | undefined {
+    const t = this.findById(id);
+    if (!t) return undefined;
+    t.remainingSeconds = Math.max(0, t.remainingSeconds - seconds);
+    this.save(t);
+    return t;
+  }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<Timer[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<Timer | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async Create(t: Timer): Promise<Timer> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.save(t);
+        })();
+        resolve(t);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<Timer>): Promise<Timer | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Timer | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<Timer[]> {
+    return Promise.resolve(this.search(query));
+  }
+
+  public async StartTimer(id: string): Promise<Timer | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Timer | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.startTimer(id);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async PauseTimer(id: string): Promise<Timer | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Timer | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.pauseTimer(id);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async ResumeTimer(id: string): Promise<Timer | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Timer | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.resumeTimer(id);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async StopTimer(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.stopTimer(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async AddTime(id: string, seconds: number): Promise<Timer | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Timer | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.addTime(id, seconds);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async SubtractTime(id: string, seconds: number): Promise<Timer | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Timer | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.subtractTime(id, seconds);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 }
 
@@ -417,6 +788,60 @@ export class TransactionRepository {
     `).all(`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`) as any[];
     return rows as TransactionLog[];
   }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<TransactionLog[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<TransactionLog | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async Create(log: TransactionLog): Promise<TransactionLog> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.create(log);
+        })();
+        resolve(log);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<TransactionLog>): Promise<TransactionLog | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: TransactionLog | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<TransactionLog[]> {
+    return Promise.resolve(this.search(query));
+  }
 }
 
 // ==========================================
@@ -469,13 +894,71 @@ export class RateRepository {
       VALUES (?, ?, ?, ?)
     `).run(r.id, r.groupName, r.ratePerHour, r.description);
   }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<Rate[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<Rate | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async FindByGroupName(groupName: string): Promise<Rate | undefined> {
+    return Promise.resolve(this.findByGroupName(groupName));
+  }
+
+  public async Create(r: Rate): Promise<Rate> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.save(r);
+        })();
+        resolve(r);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<Rate>): Promise<Rate | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Rate | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<Rate[]> {
+    return Promise.resolve(this.search(query));
+  }
 }
 
 // ==========================================
 // 6. Settings Repository
 // ==========================================
 export class SettingsRepository {
-  public get(): ShopSettings {
+  public get(): BackendShopSettings {
     const r = dbManager.db.prepare('SELECT * FROM settings WHERE id = 1').get() as any;
     return {
       rateStandard: r.rateStandard,
@@ -483,32 +966,33 @@ export class SettingsRepository {
       rateConsole: r.rateConsole,
       shopName: r.shopName,
       currencySymbol: r.currencySymbol,
+      currency: r.currency ?? 'USD',
       taxRate: r.taxRate,
       enableAutoLock: r.enableAutoLock === 1,
-      warnMinutesRemaining: r.warnMinutesRemaining
+      warnMinutesRemaining: r.warnMinutesRemaining,
+      darkTheme: r.darkTheme === 1
     };
   }
 
-  public findById(id: string | number): ShopSettings | undefined {
+  public findById(id: string | number): BackendShopSettings | undefined {
     if (Number(id) !== 1) return undefined;
     return this.get();
   }
 
-  public findAll(): ShopSettings[] {
+  public findAll(): BackendShopSettings[] {
     return [this.get()];
   }
 
-  public create(s: ShopSettings): ShopSettings {
-    // Only id=1 is allowed, so creating is replacing/updating
+  public create(s: BackendShopSettings): BackendShopSettings {
     return this.update(1, s)!;
   }
 
-  public update(id: string | number, updates: Partial<ShopSettings>): ShopSettings | undefined {
+  public update(id: string | number, updates: Partial<BackendShopSettings>): BackendShopSettings | undefined {
     const s = this.get();
     Object.assign(s, updates);
     dbManager.db.prepare(`
       UPDATE settings
-      SET rateStandard = ?, rateVIP = ?, rateConsole = ?, shopName = ?, currencySymbol = ?, taxRate = ?, enableAutoLock = ?, warnMinutesRemaining = ?
+      SET rateStandard = ?, rateVIP = ?, rateConsole = ?, shopName = ?, currencySymbol = ?, currency = ?, taxRate = ?, enableAutoLock = ?, warnMinutesRemaining = ?, darkTheme = ?
       WHERE id = 1
     `).run(
       s.rateStandard,
@@ -516,24 +1000,78 @@ export class SettingsRepository {
       s.rateConsole,
       s.shopName,
       s.currencySymbol,
+      s.currency ?? 'USD',
       s.taxRate,
       s.enableAutoLock ? 1 : 0,
-      s.warnMinutesRemaining
+      s.warnMinutesRemaining,
+      s.darkTheme ? 1 : 0
     );
     return s;
   }
 
   public delete(id: string | number): boolean {
-    // Single settings row cannot be deleted fully without breaking, but we can clear it or return false
     return false;
   }
 
-  public search(query: string): ShopSettings[] {
+  public search(query: string): BackendShopSettings[] {
     const s = this.get();
-    if (s.shopName.toLowerCase().includes(query.toLowerCase()) || s.currencySymbol.includes(query)) {
+    if (
+      s.shopName.toLowerCase().includes(query.toLowerCase()) || 
+      s.currencySymbol.includes(query) ||
+      (s.currency && s.currency.toLowerCase().includes(query.toLowerCase()))
+    ) {
       return [s];
     }
     return [];
+  }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async Get(): Promise<BackendShopSettings> {
+    return Promise.resolve(this.get());
+  }
+
+  public async FindAll(): Promise<BackendShopSettings[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string | number): Promise<BackendShopSettings | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async Create(s: BackendShopSettings): Promise<BackendShopSettings> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result: BackendShopSettings;
+        dbManager.db.transaction(() => {
+          result = this.create(s);
+        })();
+        resolve(result!);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string | number, updates: Partial<BackendShopSettings>): Promise<BackendShopSettings | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: BackendShopSettings | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string | number): Promise<boolean> {
+    return Promise.resolve(false);
+  }
+
+  public async Search(query: string): Promise<BackendShopSettings[]> {
+    return Promise.resolve(this.search(query));
   }
 }
 
@@ -586,6 +1124,64 @@ export class AdminRepository {
       INSERT OR REPLACE INTO admins (id, username, passwordHash, role, createdAt)
       VALUES (?, ?, ?, ?, ?)
     `).run(a.id, a.username, a.passwordHash, a.role, a.createdAt);
+  }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<Admin[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<Admin | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async FindByUsername(username: string): Promise<Admin | undefined> {
+    return Promise.resolve(this.findByUsername(username));
+  }
+
+  public async Create(a: Admin): Promise<Admin> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.save(a);
+        })();
+        resolve(a);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<Admin>): Promise<Admin | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Admin | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<Admin[]> {
+    return Promise.resolve(this.search(query));
   }
 }
 
@@ -690,6 +1286,60 @@ export class SessionRepository {
       status: r.status
     }));
   }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<UserSession[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<UserSession | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async Create(s: UserSession): Promise<UserSession> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.create(s);
+        })();
+        resolve(s);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<UserSession>): Promise<UserSession | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: UserSession | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<UserSession[]> {
+    return Promise.resolve(this.search(query));
+  }
 }
 
 // ==========================================
@@ -752,6 +1402,60 @@ export class ProductRepository {
       product.price,
       product.stock
     );
+  }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<POSProduct[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<POSProduct | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async Create(product: POSProduct): Promise<POSProduct> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.save(product);
+        })();
+        resolve(product);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<POSProduct>): Promise<POSProduct | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: POSProduct | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<POSProduct[]> {
+    return Promise.resolve(this.search(query));
   }
 }
 
@@ -846,6 +1550,60 @@ export class OrderRepository {
     dbManager.db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id);
     return this.findById(id);
   }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<Order[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<Order | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async Create(order: Order): Promise<Order> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.create(order);
+        })();
+        resolve(order);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<Order>): Promise<Order | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: Order | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<Order[]> {
+    return Promise.resolve(this.search(query));
+  }
 }
 
 export class ChatRepository {
@@ -909,6 +1667,60 @@ export class ChatRepository {
     const rows = dbManager.db.prepare('SELECT * FROM chat_messages WHERE pcId = ? ORDER BY timestamp ASC').all(pcId) as any[];
     return rows as ChatMessage[];
   }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<ChatMessage[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<ChatMessage | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async Create(message: ChatMessage): Promise<ChatMessage> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.create(message);
+        })();
+        resolve(message);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<ChatMessage>): Promise<ChatMessage | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: ChatMessage | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<ChatMessage[]> {
+    return Promise.resolve(this.search(query));
+  }
 }
 
 export class SocketEventRepository {
@@ -966,5 +1778,59 @@ export class SocketEventRepository {
       ORDER BY timestamp DESC LIMIT 200
     `).all(`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`) as any[];
     return rows as SocketEvent[];
+  }
+
+  // --- Async PascalCase methods with Transactions ---
+  public async FindAll(): Promise<SocketEvent[]> {
+    return Promise.resolve(this.findAll());
+  }
+
+  public async FindById(id: string): Promise<SocketEvent | undefined> {
+    return Promise.resolve(this.findById(id));
+  }
+
+  public async Create(event: SocketEvent): Promise<SocketEvent> {
+    return new Promise((resolve, reject) => {
+      try {
+        dbManager.db.transaction(() => {
+          this.create(event);
+        })();
+        resolve(event);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Update(id: string, updates: Partial<SocketEvent>): Promise<SocketEvent | undefined> {
+    return new Promise((resolve, reject) => {
+      try {
+        let updated: SocketEvent | undefined;
+        dbManager.db.transaction(() => {
+          updated = this.update(id, updates);
+        })();
+        resolve(updated);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Delete(id: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        let result = false;
+        dbManager.db.transaction(() => {
+          result = this.delete(id);
+        })();
+        resolve(result);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  public async Search(query: string): Promise<SocketEvent[]> {
+    return Promise.resolve(this.search(query));
   }
 }
